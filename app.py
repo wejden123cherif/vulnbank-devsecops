@@ -6,6 +6,7 @@ import html
 import os
 from dotenv import load_dotenv
 from auth import generate_token, token_required, verify_token, init_auth_routes
+import auth
 from werkzeug.utils import secure_filename 
 from flask_swagger_ui import get_swaggerui_blueprint
 from flask_cors import CORS
@@ -14,6 +15,9 @@ from ai_agent_deepseek import ai_agent
 import time
 from functools import wraps
 from collections import defaultdict
+import requests
+from urllib.parse import urlparse
+import platform
 
 # Load environment variables
 load_dotenv()
@@ -567,6 +571,197 @@ def upload_profile_picture(current_user):
             'message': str(e),
             'file_path': file_path  # Vulnerability: Information disclosure
         }), 500
+
+# Upload profile picture by URL (Intentionally Vulnerable to SSRF)
+@app.route('/upload_profile_picture_url', methods=['POST'])
+@token_required
+def upload_profile_picture_url(current_user):
+    try:
+        data = request.get_json() or {}
+        image_url = data.get('image_url')
+
+        if not image_url:
+            return jsonify({'status': 'error', 'message': 'image_url is required'}), 400
+
+        # Vulnerabilities:
+        # - No URL scheme/host allowlist (SSRF)
+        # - SSL verification disabled
+        # - Follows redirects
+        # - No content-type or size validation
+        resp = requests.get(image_url, timeout=10, allow_redirects=True, verify=False)
+        if resp.status_code >= 400:
+            return jsonify({'status': 'error', 'message': f'Failed to fetch URL: HTTP {resp.status_code}'}), 400
+
+        # Derive filename from URL path (user-controlled)
+        parsed = urlparse(image_url)
+        basename = os.path.basename(parsed.path) or 'downloaded'
+        filename = secure_filename(basename)
+        filename = f"{random.randint(1, 1000000)}_{filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+        # Save content directly without validation
+        with open(file_path, 'wb') as f:
+            f.write(resp.content)
+
+        # Store just the filename in DB (same pattern as file upload)
+        execute_query(
+            "UPDATE users SET profile_picture = %s WHERE id = %s",
+            (filename, current_user['user_id']),
+            fetch=False
+        )
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Profile picture imported from URL',
+            'file_path': os.path.join('static/uploads', filename),
+            'debug_info': {  # Information disclosure for learning
+                'fetched_url': image_url,
+                'http_status': resp.status_code,
+                'content_length': len(resp.content)
+            }
+        })
+    except Exception as e:
+        print(f"URL image import error: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+# INTERNAL-ONLY ENDPOINTS FOR SSRF DEMO (INTENTIONALLY SENSITIVE)
+def _is_loopback_request():
+    try:
+        ip = request.remote_addr or ''
+        return ip == '127.0.0.1' or ip.startswith('127.') or ip == '::1'
+    except Exception:
+        return False
+
+@app.route('/internal/secret', methods=['GET'])
+def internal_secret():
+    # Soft internal check: allow only loopback requests
+    if not _is_loopback_request():
+        return jsonify({'error': 'Internal resource. Loopback only.'}), 403
+
+    demo_env = {k: os.getenv(k) for k in [
+        'DB_NAME','DB_USER','DB_PASSWORD','DB_HOST','DB_PORT','DEEPSEEK_API_KEY'
+    ]}
+    # Preview sensitive values (intentionally exposing)
+    if demo_env.get('DEEPSEEK_API_KEY'):
+        demo_env['DEEPSEEK_API_KEY'] = demo_env['DEEPSEEK_API_KEY'][:8] + '...'
+
+    return jsonify({
+        'status': 'internal',
+        'note': 'Intentionally sensitive data for SSRF demonstration',
+        'secrets': {
+            'app_secret_key': app.secret_key,
+            'jwt_secret': getattr(auth, 'JWT_SECRET', None),
+            'env_preview': demo_env
+        },
+        'system': {
+            'platform': platform.platform(),
+            'python_version': platform.python_version()
+        }
+    })
+
+@app.route('/internal/config.json', methods=['GET'])
+def internal_config():
+    if not _is_loopback_request():
+        return jsonify({'error': 'Internal resource. Loopback only.'}), 403
+
+    cfg = {
+        'app': {
+            'name': 'Vulnerable Bank',
+            'debug': True,
+            'swagger_url': SWAGGER_URL,
+        },
+        'rate_limits': {
+            'window_seconds': RATE_LIMIT_WINDOW,
+            'unauthenticated_limit': UNAUTHENTICATED_LIMIT,
+            'authenticated_limit': AUTHENTICATED_LIMIT
+        }
+    }
+    return jsonify(cfg)
+
+# Cloud metadata mock (e.g., AWS IMDS) for SSRF demos
+@app.route('/latest/meta-data/', methods=['GET'])
+def metadata_root():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    body = '\n'.join([
+        'ami-id',
+        'hostname',
+        'iam/',
+        'instance-id',
+        'local-ipv4',
+        'public-ipv4',
+        'security-groups'
+    ]) + '\n'
+    resp = make_response(body, 200)
+    resp.mimetype = 'text/plain'
+    return resp
+
+@app.route('/latest/meta-data/ami-id', methods=['GET'])
+def metadata_ami():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('ami-0demo1234567890\n', 200)
+
+@app.route('/latest/meta-data/hostname', methods=['GET'])
+def metadata_hostname():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('vulnbank.internal\n', 200)
+
+@app.route('/latest/meta-data/instance-id', methods=['GET'])
+def metadata_instance():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('i-0demo1234567890\n', 200)
+
+@app.route('/latest/meta-data/local-ipv4', methods=['GET'])
+def metadata_local_ip():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('127.0.0.1\n', 200)
+
+@app.route('/latest/meta-data/public-ipv4', methods=['GET'])
+def metadata_public_ip():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('198.51.100.42\n', 200)
+
+@app.route('/latest/meta-data/security-groups', methods=['GET'])
+def metadata_sg():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('default\n', 200)
+
+@app.route('/latest/meta-data/iam/', methods=['GET'])
+def metadata_iam_root():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('security-credentials/\n', 200)
+
+@app.route('/latest/meta-data/iam/security-credentials/', methods=['GET'])
+def metadata_iam_list():
+    if not _is_loopback_request():
+        return make_response('Forbidden', 403)
+    return make_response('vulnbank-role\n', 200)
+
+@app.route('/latest/meta-data/iam/security-credentials/vulnbank-role', methods=['GET'])
+def metadata_iam_role():
+    if not _is_loopback_request():
+        return jsonify({'error': 'Forbidden'}), 403
+    creds = {
+        'Code': 'Success',
+        'LastUpdated': datetime.now().isoformat(),
+        'Type': 'AWS-HMAC',
+        'AccessKeyId': 'ASIADEMO1234567890',
+        'SecretAccessKey': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYDEMODEMO',
+        'Token': 'IQoJb3JpZ2luX2VjEJ//////////wEaCXVzLXdlc3QtMiJIMEYCIQCdemo',
+        'Expiration': (datetime.now() + timedelta(hours=1)).isoformat(),
+        'RoleArn': 'arn:aws:iam::123456789012:role/vulnbank-role'
+    }
+    return jsonify(creds)
 
 # Loan request endpoint
 @app.route('/request_loan', methods=['POST'])

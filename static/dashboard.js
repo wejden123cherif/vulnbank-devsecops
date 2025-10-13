@@ -19,6 +19,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('transferForm').addEventListener('submit', handleTransfer);
     document.getElementById('loanForm').addEventListener('submit', handleLoanRequest);
     document.getElementById('profileUploadForm').addEventListener('submit', handleProfileUpload);
+    const profileUrlBtn = document.getElementById('profileUrlButton');
+    if (profileUrlBtn) {
+        profileUrlBtn.addEventListener('click', handleProfileUrlImport);
+    }
     
     // Add virtual cards event listener
     document.getElementById('createCardForm').addEventListener('submit', handleCreateCard);
@@ -218,6 +222,37 @@ async function handleProfileUpload(event) {
         }
     } catch (error) {
         document.getElementById('upload-message').innerText = 'Upload failed';
+        document.getElementById('upload-message').style.color = 'red';
+    }
+}
+
+// Import profile picture from URL (Intentionally Vulnerable to SSRF)
+async function handleProfileUrlImport() {
+    const imageUrl = prompt('Enter image URL to import as your profile picture:');
+    if (!imageUrl) return;
+
+    try {
+        const response = await fetch('/upload_profile_picture_url', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('jwt_token'),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ image_url: imageUrl })
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+            const img = document.getElementById('profile-picture');
+            img.src = '/' + data.file_path + '?v=' + new Date().getTime();
+            document.getElementById('upload-message').innerText = 'Imported from URL successfully!';
+            document.getElementById('upload-message').style.color = 'green';
+        } else {
+            document.getElementById('upload-message').innerText = data.message || 'Import failed';
+            document.getElementById('upload-message').style.color = 'red';
+        }
+    } catch (error) {
+        document.getElementById('upload-message').innerText = 'Import failed';
         document.getElementById('upload-message').style.color = 'red';
     }
 }

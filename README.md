@@ -67,6 +67,7 @@ This project is a simple banking application with multiple security vulnerabilit
    - Directory traversal
    - No file size limits
    - Unsafe file naming
+   - Server-Side Request Forgery (SSRF) via URL-based profile image import
 
 5. **Session Management**
    - Token vulnerabilities
@@ -323,6 +324,21 @@ The application uses PostgreSQL. The database will be automatically initialized 
 3. Upload oversized files
 4. Test file overwrite scenarios
 5. File type bypass
+6. SSRF: Use `/upload_profile_picture_url` with an internal or controlled URL
+   - In-band SSRF targets (loopback-only):
+     - `http://127.0.0.1:5000/internal/secret`
+     - `http://127.0.0.1:5000/internal/config.json`
+     - `http://127.0.0.1:5000/latest/meta-data/` (and subpaths like `.../iam/security-credentials/`)
+   - Blind SSRF: point to `https://webhook.site/<your-id>` and observe the incoming request
+
+#### Example SSRF Flow
+```bash
+curl -s -X POST http://localhost:5000/upload_profile_picture_url \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"image_url":"http://127.0.0.1:5000/internal/secret"}'
+# -> Copy the returned file_path and GET http://localhost:5000/<file_path>
+```
 
 ### API Security Testing
 1. Token manipulation

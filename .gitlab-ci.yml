@@ -1,23 +1,44 @@
 stages:
   - security
 
+variables:
+  REPORT_DIR: "security-reports"
+
 semgrep-sast:
   stage: security
   tags:
     - devsecops
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/src" semgrep/semgrep:latest semgrep scan --config p/python --error /src
+    - mkdir -p "$REPORT_DIR"
+    - docker run --rm -v "$CI_PROJECT_DIR:/src" semgrep/semgrep:latest semgrep scan --config p/python --json --output /src/$REPORT_DIR/semgrep.json /src
+  artifacts:
+    when: always
+    paths:
+      - security-reports/semgrep.json
+    expire_in: 3 months
 
 gitleaks-secrets:
   stage: security
   tags:
     - devsecops
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/repo" zricethezav/gitleaks:latest detect --source /repo --verbose
+    - mkdir -p "$REPORT_DIR"
+    - docker run --rm -v "$CI_PROJECT_DIR:/repo" zricethezav/gitleaks:latest detect --source /repo --report-format json --report-path /repo/$REPORT_DIR/gitleaks.json --verbose
+  artifacts:
+    when: always
+    paths:
+      - security-reports/gitleaks.json
+    expire_in: 3 months
 
 trivy-filesystem:
   stage: security
   tags:
     - devsecops
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/src" aquasec/trivy:latest fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL /src
+    - mkdir -p "$REPORT_DIR"
+    - docker run --rm -v "$CI_PROJECT_DIR:/src" aquasec/trivy:latest fs --scanners vuln --severity HIGH,CRITICAL --format json --output /src/$REPORT_DIR/trivy-fs.json --exit-code 1 /src
+  artifacts:
+    when: always
+    paths:
+      - security-reports/trivy-fs.json
+    expire_in: 3 months

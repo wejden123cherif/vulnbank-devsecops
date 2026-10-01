@@ -42,3 +42,14 @@ trivy-filesystem:
     paths:
       - security-reports/trivy-fs.json
     expire_in: 3 months
+
+sonarqube-analysis:
+  stage: security
+  tags:
+    - devsecops
+  script:
+    - docker run --rm
+      -e SONAR_HOST_URL="$SONAR_HOST_URL"
+      -e SONAR_TOKEN="$SONAR_TOKEN"
+      -v "$CI_PROJECT_DIR:/usr/src"
+      sonarsource/sonar-scanner-cli:latest

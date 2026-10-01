@@ -3,15 +3,21 @@ stages:
 
 semgrep-sast:
   stage: security
+  tags:
+    - devsecops
   script:
     - docker run --rm -v "$CI_PROJECT_DIR:/src" semgrep/semgrep:latest semgrep scan --config p/python --error /src
 
 gitleaks-secrets:
   stage: security
+  tags:
+    - devsecops
   script:
     - docker run --rm -v "$CI_PROJECT_DIR:/repo" zricethezav/gitleaks:latest detect --source /repo --verbose
 
 trivy-filesystem:
   stage: security
+  tags:
+    - devsecops
   script:
     - docker run --rm -v "$CI_PROJECT_DIR:/src" aquasec/trivy:latest fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL /src

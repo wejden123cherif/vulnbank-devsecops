@@ -1,91 +1,140 @@
 services:
+
+  # ============================================================
+  # Web application
+  # ============================================================
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+
     restart: unless-stopped
+
     ports:
       - "${VULNBANK_WEB_PORT:-5000}:5000"
-      - "${VULNBANK_HTTP_PORT:-80}:5000"
-      # - "443:5000" 
 
     environment:
-      - DB_NAME=vulnerable_bank
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_HOST=db 
-      - DB_PORT=5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: 5432
+
     depends_on:
       db:
         condition: service_healthy
+
     volumes:
       - ./static/uploads:/app/static/uploads
+
     networks:
       - vuln_network
-    labels:
-      # Opt this container in to autoheal (see the `autoheal` service below).
-      - autoheal=true
 
-  # Keeps intentional stored-XSS payloads usable for a short testing window,
-  # then neutralizes the stored values without changing any vulnerable sink.
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    labels:
+      autoheal: "true"
+
+
+  # ============================================================
+  # XSS cleanup worker
+  # ============================================================
   xss-cleaner:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+
     restart: unless-stopped
+
     command: ["python", "xss_cleanup.py"]
+
     environment:
-      - DB_NAME=vulnerable_bank
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_HOST=db
-      - DB_PORT=5432
-      - XSS_PAYLOAD_TTL_MINUTES=${XSS_PAYLOAD_TTL_MINUTES:-15}
-      - XSS_CLEANUP_INTERVAL_SECONDS=${XSS_CLEANUP_INTERVAL_SECONDS:-60}
+      DB_NAME: ${DB_NAME:-vulnerable_bank}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: 5432
+      XSS_PAYLOAD_TTL_MINUTES: ${XSS_PAYLOAD_TTL_MINUTES:-15}
+      XSS_CLEANUP_INTERVAL_SECONDS: ${XSS_CLEANUP_INTERVAL_SECONDS:-60}
+
     depends_on:
-      web:
+      db:
         condition: service_healthy
+
     healthcheck:
       disable: true
+
     networks:
       - vuln_network
 
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+
+  # ============================================================
+  # PostgreSQL database
+  # ============================================================
   db:
     image: postgres:13
+
     restart: unless-stopped
+
     environment:
-      - POSTGRES_DB=vulnerable_bank
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${DB_NAME:-vulnerable_bank}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     networks:
       - vuln_network
+
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d vulnerable_bank"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${DB_USER:-postgres} -d $${DB_NAME:-vulnerable_bank}"
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  # Restarts containers Docker marks `unhealthy`.
+    security_opt:
+      - no-new-privileges:true
+
+
+  # ============================================================
+  # Autoheal
+  # ============================================================
   autoheal:
     image: willfarrell/autoheal:latest
+
     restart: unless-stopped
+
     environment:
-      # Only watch containers explicitly labelled `autoheal=true` (the web
-      # app), never every container on the host.
-      - AUTOHEAL_CONTAINER_LABEL=autoheal
-      # Poll container health every 10s.
-      - AUTOHEAL_INTERVAL=10
-      # Grace period before monitoring a freshly (re)started container, so a
-      # normal slow boot isn't treated as a failure.
-      - AUTOHEAL_START_PERIOD=30
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 10
+      AUTOHEAL_START_PERIOD: 30
+
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
     networks:
       - vuln_network
 
+
 volumes:
   postgres_data:
+
 
 networks:
   vuln_network:

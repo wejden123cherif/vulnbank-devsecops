@@ -19,7 +19,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_HOST: db
       DB_PORT: 5432
-
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SECURITY_TEST_PASSWORD: ${SECURITY_TEST_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET}
     depends_on:
       db:
         condition: service_healthy

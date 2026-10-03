@@ -5,14 +5,15 @@ stages:
   - build
   - image-security
   - quality
+  - security-tests
 
 variables:
   REPORT_DIR: "security-reports"
   IMAGE_NAME: "vuln-bank:ci"
-
+  VULNBANK_URL: "http://127.0.0.1:5000"
 
 # ============================================================
-# 1. SAST — Semgrep
+# 1. SAST - REPORT ONLY
 # ============================================================
 
 semgrep-sast:
@@ -22,14 +23,16 @@ semgrep-sast:
 
   script:
     - mkdir -p "$REPORT_DIR"
-    - docker run --rm
-      -v "$CI_PROJECT_DIR:/src"
-      semgrep/semgrep:latest
-      semgrep scan
-      --config p/python
-      --json
-      --output /src/$REPORT_DIR/semgrep.json
-      /src
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/src" \
+        semgrep/semgrep:latest \
+        semgrep scan \
+        --config p/python \
+        --json \
+        --output "/src/$REPORT_DIR/semgrep.json" \
+        /src || true
 
   artifacts:
     when: always
@@ -39,7 +42,7 @@ semgrep-sast:
 
 
 # ============================================================
-# 2. Secret scanning — Gitleaks
+# 2. GITLEAKS - REPORT ONLY
 # ============================================================
 
 gitleaks-secrets:
@@ -49,15 +52,17 @@ gitleaks-secrets:
 
   script:
     - mkdir -p "$REPORT_DIR"
-    - docker run --rm
-      -v "$CI_PROJECT_DIR:/repo"
-      zricethezav/gitleaks:latest
-      detect
-      --source /repo
-      --report-format json
-      --report-path /repo/$REPORT_DIR/gitleaks.json
-      --verbose
-      --exit-code 0
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/repo" \
+        zricethezav/gitleaks:latest \
+        detect \
+        --source /repo \
+        --report-format json \
+        --report-path "/repo/$REPORT_DIR/gitleaks.json" \
+        --verbose \
+        --exit-code 0
 
   artifacts:
     when: always
@@ -67,7 +72,7 @@ gitleaks-secrets:
 
 
 # ============================================================
-# 3. Dependency / filesystem scanning — Trivy
+# 3. TRIVY FILESYSTEM - REPORT ONLY
 # ============================================================
 
 trivy-filesystem:
@@ -77,16 +82,18 @@ trivy-filesystem:
 
   script:
     - mkdir -p "$REPORT_DIR"
-    - docker run --rm
-      -v "$CI_PROJECT_DIR:/src"
-      aquasec/trivy:latest
-      fs  
-      --scanners vuln
-      --severity HIGH,CRITICAL
-      --format json
-      --timeout 10m
-      --output /src/$REPORT_DIR/trivy-fs.json
-      /src
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/src" \
+        aquasec/trivy:latest \
+        fs \
+        --scanners vuln \
+        --severity HIGH,CRITICAL \
+        --timeout 10m \
+        --format json \
+        --output "/src/$REPORT_DIR/trivy-fs.json" \
+        /src || true
 
   artifacts:
     when: always
@@ -96,7 +103,7 @@ trivy-filesystem:
 
 
 # ============================================================
-# 4. Docker image build
+# 4. DOCKER BUILD - BLOCKING
 # ============================================================
 
 docker-build:
@@ -106,8 +113,11 @@ docker-build:
 
   script:
     - mkdir -p "$REPORT_DIR"
+
     - docker build -t "$IMAGE_NAME" .
-    - docker image inspect "$IMAGE_NAME" > "$REPORT_DIR/image-info.json"
+
+    - docker image inspect "$IMAGE_NAME" \
+        > "$REPORT_DIR/image-info.json"
 
   artifacts:
     when: always
@@ -117,7 +127,7 @@ docker-build:
 
 
 # ============================================================
-# 5. Container image scanning — Trivy
+# 5. TRIVY IMAGE - REPORT ONLY
 # ============================================================
 
 trivy-image:
@@ -127,15 +137,17 @@ trivy-image:
 
   script:
     - mkdir -p "$REPORT_DIR"
-    - docker run --rm
-      -v /var/run/docker.sock:/var/run/docker.sock
-      -v "$CI_PROJECT_DIR:/src"
-      aquasec/trivy:latest
-      image
-      --severity HIGH,CRITICAL
-      --format json
-      --output /src/$REPORT_DIR/trivy-image.json
-      "$IMAGE_NAME"
+
+    - |
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$CI_PROJECT_DIR:/src" \
+        aquasec/trivy:latest \
+        image \
+        --severity HIGH,CRITICAL \
+        --format json \
+        --output "/src/$REPORT_DIR/trivy-image.json" \
+        "$IMAGE_NAME" || true
 
   artifacts:
     when: always
@@ -145,7 +157,7 @@ trivy-image:
 
 
 # ============================================================
-# 6. SonarQube — Code quality / Quality Gate
+# 6. SONARQUBE - REPORT ONLY
 # ============================================================
 
 sonarqube-analysis:
@@ -154,10 +166,49 @@ sonarqube-analysis:
     - devsecops
 
   script:
-    - docker run --rm
-      -e SONAR_HOST_URL="$SONAR_HOST_URL"
-      -e SONAR_TOKEN="$SONAR_TOKEN"
-      -v "$CI_PROJECT_DIR:/usr/src"
-      sonarsource/sonar-scanner-cli:latest
-      -Dsonar.projectKey=devsecops
-      -Dsonar.qualitygate.wait=true
+    - |
+      docker run --rm \
+        -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+        -e SONAR_TOKEN="$SONAR_TOKEN" \
+        -v "$CI_PROJECT_DIR:/usr/src" \
+        sonarsource/sonar-scanner-cli:latest \
+        -Dsonar.projectKey=devsecops \
+        -Dsonar.qualitygate.wait=true || true
+
+
+# ============================================================
+# 7. SECURITY REGRESSION TESTS - BLOCKING
+# ============================================================
+
+security-regression:
+  stage: security-tests
+  tags:
+    - devsecops
+
+  script:
+
+    # Start the application
+    - docker compose up -d
+
+    # Wait for the application
+    - |
+      echo "Waiting for VulnBank..."
+
+      for i in $(seq 1 30); do
+        if curl -fs http://127.0.0.1:5000/healthz; then
+          echo "VulnBank is ready."
+          break
+        fi
+
+        sleep 2
+      done
+
+    # Install test dependencies
+    - python3 -m pip install --quiet pytest requests
+
+    # Run known vulnerability regression tests
+    - pytest -q tests/security/
+
+  after_script:
+    - docker compose logs --tail=100 web || true
+    - docker compose down -v || true

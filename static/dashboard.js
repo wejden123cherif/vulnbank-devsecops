@@ -367,7 +367,7 @@ async function handleBioUpdate(event) {
             // Update the bio display immediately with user input (XSS vulnerability)
             const bioDisplay = document.getElementById('user-bio-display');
             if (bioDisplay) {
-                bioDisplay.innerHTML = bio; // Direct innerHTML assignment - XSS!
+                bioDisplay.textContent = bio; // Direct innerHTML assignment - XSS!
             }
 
             document.getElementById('bio-message').innerText = 'Bio updated successfully!';

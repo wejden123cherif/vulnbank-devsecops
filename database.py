@@ -4,13 +4,10 @@ from psycopg2 import pool
 from datetime import datetime
 import time
 
-# Vulnerable database configuration
-# CWE-259: Use of Hard-coded Password
-# CWE-798: Use of Hard-coded Credentials
 DB_CONFIG = {
     'dbname': os.getenv('DB_NAME', 'vulnerable_bank'),
     'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD', 'postgres'),  # Hardcoded password in default value
+    'password': os.getenv('DB_PASSWORD'),  # Hardcoded password in default value
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': os.getenv('DB_PORT', '5432'),
     'options': f"-c statement_timeout={os.getenv('DB_STATEMENT_TIMEOUT_MS', '15000')}",
@@ -250,14 +247,49 @@ def init_db():
             # Create default admin account if it doesn't exist
             cursor.execute("SELECT * FROM users WHERE username='admin'")
             if not cursor.fetchone():
+                admin_password = os.getenv('ADMIN_PASSWORD')
+
+                if not admin_password:
+                    raise RuntimeError("ADMIN_PASSWORD environment variable is required")
+
                 cursor.execute(
                     """
                     INSERT INTO users (username, password, account_number, balance, is_admin) 
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    ('admin', 'admin123', 'ADMIN001', 1000000.0, True)
+                    ('admin', admin_password, 'ADMIN001', 1000000.0, True)
                 )
             
+            # Create dedicated security regression test user if it doesn't exist
+            cursor.execute(
+                "SELECT id FROM users WHERE username = %s",
+                ("security_test",)
+            )
+
+            if not cursor.fetchone():
+                security_test_password = os.getenv("SECURITY_TEST_PASSWORD")
+
+                if not security_test_password:
+                    raise RuntimeError(
+                        "SECURITY_TEST_PASSWORD environment variable is required"
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO users
+                        (username, password, account_number, balance, is_admin)
+                    VALUES
+                        (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        "security_test",
+                        security_test_password,
+                        "TEST001",
+                        1000.0,
+                        False,
+                    )
+                )
+
             # Create bill categories table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS bill_categories (

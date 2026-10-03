@@ -116,8 +116,7 @@ docker-build:
 
     - docker build -t "$IMAGE_NAME" .
 
-    - docker image inspect "$IMAGE_NAME" \
-        > "$REPORT_DIR/image-info.json"
+    - docker image inspect "$IMAGE_NAME"  > "$REPORT_DIR/image-info.json"
 
   artifacts:
     when: always

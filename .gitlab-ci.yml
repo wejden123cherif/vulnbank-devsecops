@@ -80,10 +80,11 @@ trivy-filesystem:
     - docker run --rm
       -v "$CI_PROJECT_DIR:/src"
       aquasec/trivy:latest
-      fs
+      fs  
       --scanners vuln
       --severity HIGH,CRITICAL
       --format json
+      --timeout 10m
       --output /src/$REPORT_DIR/trivy-fs.json
       /src
 

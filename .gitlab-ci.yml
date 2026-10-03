@@ -187,7 +187,7 @@ security-regression:
   script:
 
     # Start the application
-    - docker compose up -d
+    - docker-compose up -d
 
     # Wait for the application
     - |
@@ -209,5 +209,5 @@ security-regression:
     - pytest -q tests/security/
 
   after_script:
-    - docker compose logs --tail=100 web || true
-    - docker compose down -v || true
+    - docker-compose logs --tail=100 web || true
+    - docker-compose down -v || true

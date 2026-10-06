@@ -116,7 +116,7 @@ docker-build:
 
     - docker build -t "$IMAGE_NAME" .
 
-    - docker image inspect "$IMAGE_NAME"  > "$REPORT_DIR/image-info.json"
+    - docker image inspect "$IMAGE_NAME" > "$REPORT_DIR/image-info.json"
 
   artifacts:
     when: always
@@ -186,27 +186,65 @@ security-regression:
 
   script:
 
+    # --------------------------------------------------------
     # Start the application
+    # --------------------------------------------------------
+
     - docker-compose up -d
 
+    # --------------------------------------------------------
     # Wait for the application
+    # --------------------------------------------------------
+
     - |
       echo "Waiting for VulnBank..."
 
       for i in $(seq 1 30); do
+
         if curl -fs http://127.0.0.1:5050/healthz; then
           echo "VulnBank is ready."
           break
         fi
 
+        echo "Attempt $i/30: VulnBank not ready yet..."
         sleep 2
+
       done
 
-    # Install test dependencies
-    - docker run --rm --network host -e VULNBANK_URL="$VULNBANK_URL" -v "$CI_PROJECT_DIR:/workspace" -w /workspace python:3.11-slim sh -c "pip install --quiet pytest requests && pytest -q tests/security/"
+      if ! curl -fs http://127.0.0.1:5050/healthz; then
+        echo "ERROR: VulnBank did not become ready."
+        docker-compose ps
+        docker-compose logs --tail=100
+        exit 1
+      fi
 
-    # Run known vulnerability regression tests
-    - pytest -q tests/security/
+    # --------------------------------------------------------
+    # Run security regression tests
+    # --------------------------------------------------------
+    #
+    # IMPORTANT:
+    # Run the container using the SAME UID/GID as the
+    # GitLab Runner so pytest does not create root-owned
+    # files inside $CI_PROJECT_DIR.
+    # --------------------------------------------------------
+
+    - |
+      docker run --rm \
+        --network host \
+        --user "$(id -u):$(id -g)" \
+        -e VULNBANK_URL="$VULNBANK_URL" \
+        -v "$CI_PROJECT_DIR:/workspace" \
+        -w /workspace \
+        python:3.11-slim \
+        sh -c "
+          python -m venv /tmp/venv &&
+          /tmp/venv/bin/pip install --quiet pytest requests &&
+          /tmp/venv/bin/pytest -q tests/security/
+        "
+
+  # ----------------------------------------------------------
+  # Always collect application logs and stop containers
+  # ----------------------------------------------------------
 
   after_script:
     - docker-compose logs --tail=100 web || true

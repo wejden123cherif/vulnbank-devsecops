@@ -233,6 +233,7 @@ security-regression:
         --network host \
         --user "$(id -u):$(id -g)" \
         -e VULNBANK_URL="$VULNBANK_URL" \
+        -e SECURITY_TEST_PASSWORD="$SECURITY_TEST_PASSWORD"
         -v "$CI_PROJECT_DIR:/workspace" \
         -w /workspace \
         python:3.11-slim \

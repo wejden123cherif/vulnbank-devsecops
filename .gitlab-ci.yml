@@ -10,7 +10,7 @@ stages:
 variables:
   REPORT_DIR: "security-reports"
   IMAGE_NAME: "vuln-bank:ci"
-  VULNBANK_URL: "http://127.0.0.1:5000"
+  VULNBANK_URL: "http://127.0.0.1:5050"
 
 # ============================================================
 # 1. SAST - REPORT ONLY

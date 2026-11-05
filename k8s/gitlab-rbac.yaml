@@ -1,0 +1,55 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gitlab-deployer-role
+  namespace: vulnbank
+rules:
+  # Manage Flask Deployment and PostgreSQL StatefulSet
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+
+  # Read Pods for rollout verification
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+
+  # Manage application and database Services
+  - apiGroups: [""]
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-deployer-binding
+  namespace: vulnbank
+subjects:
+  - kind: ServiceAccount
+    name: gitlab-deployer
+    namespace: vulnbank
+roleRef:
+  kind: Role
+  name: gitlab-deployer-role
+  apiGroup: rbac.authorization.k8s.io

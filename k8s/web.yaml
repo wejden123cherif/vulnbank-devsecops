@@ -1,0 +1,111 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnbank-web
+  namespace: vulnbank
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: vulnbank-web
+
+  template:
+    metadata:
+      labels:
+        app: vulnbank-web
+
+    spec:
+      # Run the application as a non-root user
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+
+      # Credentials to pull private images from GitLab
+      imagePullSecrets:
+        - name: gitlab-registry
+
+      containers:
+        - name: web
+
+          # Placeholder replaced by GitLab CD with:
+          # $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+          image: vuln-bank:k8s
+
+          # Pull the image if it is not available locally
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 5000
+
+          # Application configuration and secrets
+          envFrom:
+            - configMapRef:
+                name: vulnbank-config
+            - secretRef:
+                name: app-secret
+
+          # Database credentials
+          env:
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnbank-web
+  namespace: vulnbank
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app: vulnbank-web
+
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+

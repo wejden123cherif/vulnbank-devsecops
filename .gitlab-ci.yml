@@ -6,6 +6,8 @@ stages:
   - image-security
   - quality
   - security-tests
+  - publish
+  - deploy
 
 variables:
   REPORT_DIR: "security-reports"
@@ -212,3 +214,73 @@ security-regression:
   after_script:
     - docker-compose logs --tail=100 web || true
     - docker-compose down -v || true
+# ============================================================
+# 8.Publish the image on gitlab
+# ============================================================
+
+
+
+publish-image:
+  stage: publish
+  tags:
+    - devsecops
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  script:
+    - export DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - docker tag vuln-bank:ci "$DEPLOY_IMAGE"
+    - docker push "$DEPLOY_IMAGE"
+    - echo "VulnBank image published successfully."
+
+# ============================================================
+# 9. AUTOMATED KUBERNETES DEPLOYMENT
+# ============================================================
+
+deploy-minikube:
+  stage: deploy
+  tags:
+    - devsecops
+
+  resource_group: minikube
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  environment:
+    name: minikube
+
+  script:
+    - |
+      set -e
+
+      echo "Deploying VulnBank to Minikube..."
+
+      DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+      # Apply PostgreSQL resources
+      kubectl -n vulnbank apply -f k8s/postgres.yaml
+
+      kubectl -n vulnbank rollout status \
+        statefulset/postgres --timeout=180s
+
+      # Verify expected image placeholder
+      grep -q 'image: vuln-bank:k8s' k8s/web.yaml || {
+        echo "Image placeholder not found in web.yaml"
+        exit 1
+      }
+
+      # Apply Flask Deployment with commit-specific image
+      sed "s|image: vuln-bank:k8s|image: ${DEPLOY_IMAGE}|" \
+        k8s/web.yaml | kubectl -n vulnbank apply -f -
+
+      # Wait for Flask Deployment
+      kubectl -n vulnbank rollout status \
+        deployment/vulnbank-web --timeout=180s
+
+      # Show deployment status
+      kubectl -n vulnbank get pods,deployments,statefulsets,services
+
+      echo "VulnBank deployment completed."

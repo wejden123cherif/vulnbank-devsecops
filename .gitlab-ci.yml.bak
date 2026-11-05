@@ -1,0 +1,280 @@
+stages:
+  - sast
+  - secrets
+  - filesystem
+  - build
+  - image-security
+  - quality
+  - security-tests
+  - publish
+  - deploy
+
+variables:
+  REPORT_DIR: "security-reports"
+  IMAGE_NAME: "vuln-bank:ci"
+  VULNBANK_URL: "http://127.0.0.1:5050"
+
+# ============================================================
+# 1. SAST - REPORT ONLY
+# ============================================================
+
+semgrep-sast:
+  stage: sast
+  tags:
+    - devsecops
+
+  script:
+    - mkdir -p "$REPORT_DIR"
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/src" \
+        semgrep/semgrep:latest \
+        semgrep scan \
+        --config p/python \
+        --json \
+        --output "/src/$REPORT_DIR/semgrep.json" \
+        /src || true
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/semgrep.json
+    expire_in: 3 months
+
+
+# ============================================================
+# 2. GITLEAKS - REPORT ONLY
+# ============================================================
+
+gitleaks-secrets:
+  stage: secrets
+  tags:
+    - devsecops
+
+  script:
+    - mkdir -p "$REPORT_DIR"
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/repo" \
+        zricethezav/gitleaks:latest \
+        detect \
+        --source /repo \
+        --report-format json \
+        --report-path "/repo/$REPORT_DIR/gitleaks.json" \
+        --verbose \
+        --exit-code 0
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/gitleaks.json
+    expire_in: 3 months
+
+
+# ============================================================
+# 3. TRIVY FILESYSTEM - REPORT ONLY
+# ============================================================
+
+trivy-filesystem:
+  stage: filesystem
+  tags:
+    - devsecops
+
+  script:
+    - mkdir -p "$REPORT_DIR"
+
+    - |
+      docker run --rm \
+        -v "$CI_PROJECT_DIR:/src" \
+        aquasec/trivy:latest \
+        fs \
+        --scanners vuln \
+        --severity HIGH,CRITICAL \
+        --timeout 10m \
+        --format json \
+        --output "/src/$REPORT_DIR/trivy-fs.json" \
+        /src || true
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/trivy-fs.json
+    expire_in: 3 months
+
+
+# ============================================================
+# 4. DOCKER BUILD - BLOCKING
+# ============================================================
+
+docker-build:
+  stage: build
+  tags:
+    - devsecops
+
+  script:
+    - mkdir -p "$REPORT_DIR"
+
+    - docker build -t "$IMAGE_NAME" .
+
+    - docker image inspect "$IMAGE_NAME" > "$REPORT_DIR/image-info.json"
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/image-info.json
+    expire_in: 3 months
+
+
+# ============================================================
+# 5. TRIVY IMAGE - REPORT ONLY
+# ============================================================
+
+trivy-image:
+  stage: image-security
+  tags:
+    - devsecops
+
+  script:
+    - mkdir -p "$REPORT_DIR"
+
+    - |
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$CI_PROJECT_DIR:/src" \
+        aquasec/trivy:latest \
+        image \
+        --severity HIGH,CRITICAL \
+        --format json \
+        --output "/src/$REPORT_DIR/trivy-image.json" \
+        "$IMAGE_NAME" || true
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/trivy-image.json
+    expire_in: 3 months
+
+
+# ============================================================
+# 6. SONARQUBE - REPORT ONLY
+# ============================================================
+
+sonarqube-analysis:
+  stage: quality
+  tags:
+    - devsecops
+
+  script:
+    - |
+      docker run --rm \
+        -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+        -e SONAR_TOKEN="$SONAR_TOKEN" \
+        -v "$CI_PROJECT_DIR:/usr/src" \
+        sonarsource/sonar-scanner-cli:latest \
+        -Dsonar.projectKey=devsecops \
+        -Dsonar.qualitygate.wait=true || true
+
+
+# ============================================================
+# 7. SECURITY REGRESSION TESTS - BLOCKING
+# ============================================================
+
+security-regression:
+  stage: security-tests
+  tags:
+    - devsecops
+
+  script:
+    - docker-compose up -d
+
+    - |
+      echo "Waiting for VulnBank..."
+
+      for i in $(seq 1 30); do
+        if curl -fs http://127.0.0.1:5050/healthz; then
+          echo "VulnBank is ready."
+          break
+        fi
+
+        echo "Attempt $i/30: VulnBank not ready yet..."
+        sleep 2
+      done
+
+      if ! curl -fs http://127.0.0.1:5050/healthz; then
+        echo "ERROR: VulnBank did not become ready."
+        docker-compose ps
+        docker-compose logs --tail=100
+        exit 1
+      fi
+
+    - docker run --rm --network host --user "$(id -u):$(id -g)" -e VULNBANK_URL="$VULNBANK_URL" -e SECURITY_TEST_PASSWORD="$SECURITY_TEST_PASSWORD" -v "$CI_PROJECT_DIR:/workspace" -w /workspace python:3.11-slim sh -c 'python -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet pytest requests && /tmp/venv/bin/pytest -q tests/security/'
+
+  after_script:
+    - docker-compose logs --tail=100 web || true
+    - docker-compose down -v || true
+# ============================================================
+# 8.Publish the image on gitlab
+# ============================================================
+
+
+
+publish-image:
+  stage: publish
+  tags:
+    - devsecops
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  script:
+    - export DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - docker tag vuln-bank:ci "$DEPLOY_IMAGE"
+    - docker push "$DEPLOY_IMAGE"
+    - echo "VulnBank image published successfully."
+# deploy  
+deploy-minikube:
+  stage: deploy
+  tags:
+    - devsecops
+
+  resource_group: minikube
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  environment:
+    name: minikube
+
+  script:
+    - echo "Deploying VulnBank to Minikube..."
+
+    # Verify existing Kubernetes configuration
+    - kubectl -n vulnbank get secret postgres-secret
+    - kubectl -n vulnbank get secret app-secret
+    - kubectl -n vulnbank get secret gitlab-registry
+    - kubectl -n vulnbank get configmap vulnbank-config
+
+    # Apply PostgreSQL infrastructure without deleting its PVC
+    - kubectl -n vulnbank apply -f k8s/postgres.yaml
+    - kubectl -n vulnbank rollout status statefulset/postgres --timeout=180s
+
+    # Deploy the image built from this Git commit
+    - |
+      DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+      grep -q 'image: vuln-bank:k8s' k8s/web.yaml || {
+        echo "Expected image placeholder not found in web.yaml"
+        exit 1
+      }
+
+      sed "s|image: vuln-bank:k8s|image: ${DEPLOY_IMAGE}|" k8s/web.yaml \
+        | kubectl -n vulnbank apply -f -
+
+    # Wait for successful Flask deployment
+    - kubectl -n vulnbank rollout status deployment/vulnbank-web --timeout=180s
+
+    # Show deployed resources
+    - kubectl -n vulnbank get pods,deployments,statefulsets,services,pvc

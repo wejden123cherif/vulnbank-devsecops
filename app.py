@@ -4,6 +4,7 @@ from functools import wraps
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from flask_cors import CORS
 from database import execute_query, init_connection_pool, init_db
+from merchant_payments import init_merchant_payment_routes
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,6 +20,10 @@ if not app.config['SECRET_KEY']:
 
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
+
+
+# Register merchant pages and payment API routes before the first request.
+init_merchant_payment_routes(app)
 
 
 # ============================================================
@@ -90,6 +95,15 @@ def healthz():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+# ============================================================
+# Customer registration page
+# ============================================================
+
+@app.route('/register', methods=['GET'])
+def register():
+    return render_template('register.html')
 
 
 # ============================================================

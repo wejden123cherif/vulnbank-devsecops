@@ -279,7 +279,12 @@ deploy-minikube:
       # Wait for Flask Deployment
       kubectl -n vulnbank rollout status \
         deployment/vulnbank-web --timeout=180s
+     
+            # Apply NetworkPolicy allow rules first
+      kubectl apply -n vulnbank -f k8s/network-policies/allow-rules.yaml
 
+      # Apply default-deny last
+      kubectl apply -n vulnbank -f k8s/network-policies/default-deny.yaml
       # Show deployment status
       kubectl -n vulnbank get pods,deployments,statefulsets,services
 

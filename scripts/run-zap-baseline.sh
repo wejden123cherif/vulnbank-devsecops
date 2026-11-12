@@ -52,6 +52,7 @@ docker run --rm \
   ghcr.io/zaproxy/zaproxy:stable \
   zap-baseline.py \
   -t "$TARGET" \
+  --autooff \
   -d \
   -m 2 \
   -c zap-rules.conf \

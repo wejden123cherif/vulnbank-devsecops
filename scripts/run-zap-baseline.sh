@@ -47,12 +47,15 @@ set +e
 docker run --rm \
   --network host \
   --user "$(id -u):$(id -g)" \
+  --workdir /zap/wrk \
   -v "$REPORT_DIR:/zap/wrk:rw" \
   -e HOME=/tmp \
   ghcr.io/zaproxy/zaproxy:stable \
   zap-baseline.py \
   -t "$TARGET" \
   --autooff \
+  -z "-silent -dir /tmp/zap-home" \
+  -T 10 \
   -d \
   -m 2 \
   -c zap-rules.conf \

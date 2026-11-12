@@ -8,7 +8,7 @@ stages:
   - security-tests
   - publish
   - deploy
-
+  - dast
 variables:
   REPORT_DIR: "security-reports"
   IMAGE_NAME: "vuln-bank:ci"
@@ -289,3 +289,28 @@ deploy-minikube:
       kubectl -n vulnbank get pods,deployments,statefulsets,services
 
       echo "VulnBank deployment completed."
+# ============================================================
+# 11. DAST - OWASP ZAP Baseline
+# ============================================================
+
+dast-baseline:
+  stage: dast
+
+  tags:
+    - devsecops
+
+  resource_group: minikube
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  script:
+    - bash scripts/run-zap-baseline.sh
+
+  allow_failure: false
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/zap/ci/
+    expire_in: 7 days

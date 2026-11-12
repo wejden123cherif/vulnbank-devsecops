@@ -21,7 +21,7 @@ export DAST_JWT_SECRET="$(openssl rand -hex 32)"
 cleanup() {
   docker rm -f "vulnbank-zap-active-${CI_PIPELINE_ID:-local}" >/dev/null 2>&1 || true
   echo "Cleaning up isolated DAST environment..."
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" \
+  docker-compose -p "$PROJECT" -f "$COMPOSE_FILE" \
     down --remove-orphans || true
 }
 
@@ -30,7 +30,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "Starting isolated VulnBank environment..."
-docker compose -p "$PROJECT" -f "$COMPOSE_FILE" \
+docker-compose -p "$PROJECT" -f "$COMPOSE_FILE" \
   up -d --build
 
 echo "Waiting for disposable VulnBank to become ready..."
@@ -47,7 +47,7 @@ done
 
 if [ "$READY" -ne 1 ]; then
   echo "ERROR: Disposable application is not ready."
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" \
+  docker-compose -p "$PROJECT" -f "$COMPOSE_FILE" \
     logs --tail=60
   exit 1
 fi

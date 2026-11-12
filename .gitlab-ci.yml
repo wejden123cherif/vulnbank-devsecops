@@ -314,3 +314,25 @@ dast-baseline:
     paths:
       - security-reports/zap/ci/
     expire_in: 7 days
+
+dast-active:
+  stage: dast
+  tags:
+    - devsecops
+  resource_group: dast-active-isolated
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+
+  script:
+    - bash scripts/run-zap-active.sh
+
+  artifacts:
+    when: always
+    paths:
+      - security-reports/zap/active/
+    expire_in: 7 days
+
+  timeout: 40m

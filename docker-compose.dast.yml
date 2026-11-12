@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: vulnerable_bank
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DAST_DB_PASSWORD:?Required}
+    tmpfs:
+      - /var/lib/postgresql/data:size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vulnerable_bank"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    networks:
+      - dast_network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:19001:5000"
+    environment:
+      DB_NAME: vulnerable_bank
+      DB_USER: postgres
+      DB_PASSWORD: ${DAST_DB_PASSWORD:?Required}
+      DB_HOST: db
+      DB_PORT: "5432"
+      ADMIN_PASSWORD: ${DAST_ADMIN_PASSWORD:?Required}
+      SECURITY_TEST_PASSWORD: ${DAST_TEST_PASSWORD:?Required}
+      SECRET_KEY: ${DAST_SECRET_KEY:?Required}
+      JWT_SECRET: ${DAST_JWT_SECRET:?Required}
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - dast_network
+
+networks:
+  dast_network:
+    driver: bridge

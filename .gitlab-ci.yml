@@ -213,7 +213,7 @@ security-regression:
 
   after_script:
     - docker-compose logs --tail=100 web || true
-    - docker-compose down -v || true
+    - docker-compose down || true
 # ============================================================
 # 8.Publish the image on gitlab
 # ============================================================

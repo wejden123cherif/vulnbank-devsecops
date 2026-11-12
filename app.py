@@ -12,6 +12,14 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# OWASP ZAP 10020: prevent clickjacking via cross-site framing.
+# OWASP ZAP 10021: disable MIME type sniffing.
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 JWT_SECRET = os.getenv('JWT_SECRET')
 

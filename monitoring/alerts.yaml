@@ -1,0 +1,64 @@
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+
+metadata:
+  name: vulnbank-availability-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+    app: vulnbank
+
+spec:
+  groups:
+    - name: vulnbank.availability.rules
+      interval: 30s
+
+      rules:
+        # ------------------------------------
+        # Alert 1: Flask application unavailable
+        # ------------------------------------
+        - alert: VulnBankWebUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{
+              namespace="vulnbank",
+              deployment="vulnbank-web"
+            } < 1
+
+          for: 1m
+
+          labels:
+            severity: critical
+            service: vulnbank-web
+            namespace: vulnbank
+
+          annotations:
+            summary: "VulnBank web application is unavailable"
+            description: >-
+              The vulnbank-web Deployment has fewer than
+              one available replica for at least one minute.
+              Check the web Pods, their events, and logs.
+
+        # ------------------------------------
+        # Alert 2: PostgreSQL unavailable
+        # ------------------------------------
+        - alert: VulnBankPostgresUnavailable
+          expr: |
+            kube_statefulset_status_replicas_ready{
+              namespace="vulnbank",
+              statefulset="postgres"
+            } < 1
+
+          for: 1m
+
+          labels:
+            severity: critical
+            service: postgres
+            namespace: vulnbank
+
+          annotations:
+            summary: "VulnBank PostgreSQL is unavailable"
+            description: >-
+              The postgres StatefulSet has fewer than
+              one ready replica for at least one minute.
+              Check postgres-0 and investigate database logs.

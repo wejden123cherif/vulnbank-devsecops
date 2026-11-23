@@ -68,3 +68,66 @@ roleRef:
   kind: Role
   name: gitlab-deployer-role
   apiGroup: rbac.authorization.k8s.io
+---
+
+# =============================================
+# VulnBank - Monitoring RBAC
+# =============================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gitlab-monitoring-role
+  namespace: monitoring
+
+rules:
+  # Manage VulnBank Prometheus alert rules.
+  - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+
+  # Read monitoring workload status.
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-monitoring-binding
+  namespace: monitoring
+
+subjects:
+  - kind: ServiceAccount
+    name: gitlab-deployer
+    namespace: vulnbank
+
+roleRef:
+  kind: Role
+  name: gitlab-monitoring-role
+  apiGroup: rbac.authorization.k8s.io

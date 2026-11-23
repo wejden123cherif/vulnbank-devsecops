@@ -34,9 +34,17 @@ spec:
           # Placeholder replaced by GitLab CD with:
           # $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
           image: vuln-bank:k8s
-
-          # Pull the image if it is not available locally
           imagePullPolicy: IfNotPresent
+
+          # Container security hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
 
           ports:
             - name: http
@@ -108,4 +116,3 @@ spec:
     - name: http
       port: 5000
       targetPort: 5000
-

@@ -1,0 +1,149 @@
+
+# ==============================================
+# VulnBank DevSecOps - Monitoring Stack
+# Chart: kube-prometheus-stack
+# Chart version: 93.7.0
+# Environment: Minikube
+# ==============================================
+
+# We will add custom alert rules later.
+defaultRules:
+  create: false
+
+# ----------------------------------------------
+# Alertmanager - Internal alerts only
+# ----------------------------------------------
+alertmanager:
+  enabled: true
+
+  config:
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: "null"
+      group_by:
+        - alertname
+        - namespace
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+    receivers:
+      - name: "null"
+
+  alertmanagerSpec:
+    replicas: 1
+    retention: 6h
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# ----------------------------------------------
+# Kubernetes workload monitoring
+# ----------------------------------------------
+kubeStateMetrics:
+  enabled: true
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 192Mi
+
+# ----------------------------------------------
+# Optional infrastructure monitoring
+# ----------------------------------------------
+kubeEtcd:
+  enabled: false
+
+nodeExporter:
+  enabled: false
+
+kubelet:
+  enabled: false
+
+kubeApiServer:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+coreDns:
+  enabled: false
+
+# ----------------------------------------------
+# Prometheus
+# ----------------------------------------------
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+    replicas: 1
+
+    # Short retention for development.
+    retention: 6h
+    retentionSize: 300MB
+
+    # Discover ServiceMonitors from any namespace.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+
+    # Discover custom PrometheusRules.
+    ruleSelectorNilUsesHelmValues: false
+
+    # Temporary metrics storage.
+    # No persistent volume configured.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 768Mi
+
+# ----------------------------------------------
+# Grafana
+# ----------------------------------------------
+grafana:
+  enabled: true
+
+  # Temporary data storage for the demo.
+  persistence:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi
+
+# ----------------------------------------------
+# Prometheus Operator
+# ----------------------------------------------
+prometheusOperator:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

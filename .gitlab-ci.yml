@@ -1,3 +1,14 @@
+
+# ============================================================
+# VulnBank DevSecOps - GitLab CI/CD Pipeline
+#
+# Security scanning
+# Docker image build and publishing
+# Kubernetes deployment
+# Monitoring alert deployment
+# OWASP ZAP DAST
+# ============================================================
+
 stages:
   - sast
   - secrets
@@ -8,14 +19,17 @@ stages:
   - security-tests
   - publish
   - deploy
+  - monitoring
   - dast
+
 variables:
   REPORT_DIR: "security-reports"
   IMAGE_NAME: "vuln-bank:ci"
   VULNBANK_URL: "http://127.0.0.1:5050"
 
 # ============================================================
-# 1. SAST - REPORT ONLY
+# 1. SAST - SEMGREP
+# Report only
 # ============================================================
 
 semgrep-sast:
@@ -25,7 +39,6 @@ semgrep-sast:
 
   script:
     - mkdir -p "$REPORT_DIR"
-
     - |
       docker run --rm \
         -v "$CI_PROJECT_DIR:/src" \
@@ -42,9 +55,9 @@ semgrep-sast:
       - security-reports/semgrep.json
     expire_in: 3 months
 
-
 # ============================================================
-# 2. GITLEAKS - REPORT ONLY
+# 2. SECRETS DETECTION - GITLEAKS
+# Report only
 # ============================================================
 
 gitleaks-secrets:
@@ -54,7 +67,6 @@ gitleaks-secrets:
 
   script:
     - mkdir -p "$REPORT_DIR"
-
     - |
       docker run --rm \
         -v "$CI_PROJECT_DIR:/repo" \
@@ -72,9 +84,9 @@ gitleaks-secrets:
       - security-reports/gitleaks.json
     expire_in: 3 months
 
-
 # ============================================================
-# 3. TRIVY FILESYSTEM - REPORT ONLY
+# 3. FILESYSTEM SECURITY SCAN - TRIVY
+# Report only
 # ============================================================
 
 trivy-filesystem:
@@ -84,7 +96,6 @@ trivy-filesystem:
 
   script:
     - mkdir -p "$REPORT_DIR"
-
     - |
       docker run --rm \
         -v "$CI_PROJECT_DIR:/src" \
@@ -103,7 +114,6 @@ trivy-filesystem:
       - security-reports/trivy-fs.json
     expire_in: 3 months
 
-
 # ============================================================
 # 4. DOCKER BUILD - BLOCKING
 # ============================================================
@@ -115,9 +125,7 @@ docker-build:
 
   script:
     - mkdir -p "$REPORT_DIR"
-
     - docker build -t "$IMAGE_NAME" .
-
     - docker image inspect "$IMAGE_NAME" > "$REPORT_DIR/image-info.json"
 
   artifacts:
@@ -126,9 +134,9 @@ docker-build:
       - security-reports/image-info.json
     expire_in: 3 months
 
-
 # ============================================================
-# 5. TRIVY IMAGE - REPORT ONLY
+# 5. DOCKER IMAGE SECURITY SCAN - TRIVY
+# Report only
 # ============================================================
 
 trivy-image:
@@ -138,7 +146,6 @@ trivy-image:
 
   script:
     - mkdir -p "$REPORT_DIR"
-
     - |
       docker run --rm \
         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -156,9 +163,9 @@ trivy-image:
       - security-reports/trivy-image.json
     expire_in: 3 months
 
-
 # ============================================================
-# 6. SONARQUBE - REPORT ONLY
+# 6. CODE QUALITY - SONARQUBE
+# Report only
 # ============================================================
 
 sonarqube-analysis:
@@ -175,7 +182,6 @@ sonarqube-analysis:
         sonarsource/sonar-scanner-cli:latest \
         -Dsonar.projectKey=devsecops \
         -Dsonar.qualitygate.wait=true || true
-
 
 # ============================================================
 # 7. SECURITY REGRESSION TESTS - BLOCKING
@@ -209,16 +215,24 @@ security-regression:
         exit 1
       fi
 
-    - docker run --rm --network host --user "$(id -u):$(id -g)" -e VULNBANK_URL="$VULNBANK_URL" -e SECURITY_TEST_PASSWORD="$SECURITY_TEST_PASSWORD" -v "$CI_PROJECT_DIR:/workspace" -w /workspace python:3.11-slim sh -c 'python -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet pytest requests && /tmp/venv/bin/pytest -q tests/security/'
+    - |
+      docker run --rm \
+        --network host \
+        --user "$(id -u):$(id -g)" \
+        -e VULNBANK_URL="$VULNBANK_URL" \
+        -e SECURITY_TEST_PASSWORD="$SECURITY_TEST_PASSWORD" \
+        -v "$CI_PROJECT_DIR:/workspace" \
+        -w /workspace \
+        python:3.11-slim \
+        sh -c 'python -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet pytest requests && /tmp/venv/bin/pytest -q tests/security/'
 
   after_script:
     - docker-compose logs --tail=100 web || true
     - docker-compose down || true
-# ============================================================
-# 8.Publish the image on gitlab
-# ============================================================
 
-
+# ============================================================
+# 8. PUBLISH IMAGE TO GITLAB CONTAINER REGISTRY
+# ============================================================
 
 publish-image:
   stage: publish
@@ -229,11 +243,20 @@ publish-image:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
   script:
-    - export DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
-    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
-    - docker tag vuln-bank:ci "$DEPLOY_IMAGE"
-    - docker push "$DEPLOY_IMAGE"
-    - echo "VulnBank image published successfully."
+    - |
+      set -e
+
+      DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+      echo "$CI_REGISTRY_PASSWORD" | \
+        docker login "$CI_REGISTRY" \
+        -u "$CI_REGISTRY_USER" \
+        --password-stdin
+
+      docker tag "$IMAGE_NAME" "$DEPLOY_IMAGE"
+      docker push "$DEPLOY_IMAGE"
+
+      echo "VulnBank image published successfully."
 
 # ============================================================
 # 9. AUTOMATED KUBERNETES DEPLOYMENT
@@ -260,42 +283,154 @@ deploy-minikube:
 
       DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
 
-      # Apply PostgreSQL resources
+      # Deploy PostgreSQL resources.
       kubectl -n vulnbank apply -f k8s/postgres.yaml
 
       kubectl -n vulnbank rollout status \
         statefulset/postgres --timeout=180s
 
-      # Verify expected image placeholder
+      # Verify image placeholder.
       grep -q 'image: vuln-bank:k8s' k8s/web.yaml || {
-        echo "Image placeholder not found in web.yaml"
+        echo "ERROR: Image placeholder not found in web.yaml."
         exit 1
       }
 
-      # Apply Flask Deployment with commit-specific image
+      # Deploy Flask with commit-specific image.
       sed "s|image: vuln-bank:k8s|image: ${DEPLOY_IMAGE}|" \
         k8s/web.yaml | kubectl -n vulnbank apply -f -
 
-      # Wait for Flask Deployment
+      # Verify Flask deployment.
       kubectl -n vulnbank rollout status \
         deployment/vulnbank-web --timeout=180s
-     
-            # Apply NetworkPolicy allow rules first
-      kubectl apply -n vulnbank -f k8s/network-policies/allow-rules.yaml
 
-      # Apply default-deny last
-      kubectl apply -n vulnbank -f k8s/network-policies/default-deny.yaml
-      # Show deployment status
-      kubectl -n vulnbank get pods,deployments,statefulsets,services
+      # Apply NetworkPolicy allow rules first.
+      kubectl apply -n vulnbank \
+        -f k8s/network-policies/allow-rules.yaml
+
+      # Apply default-deny rules last.
+      kubectl apply -n vulnbank \
+        -f k8s/network-policies/default-deny.yaml
+
+      # Display application resources.
+      kubectl -n vulnbank get \
+        pods,deployments,statefulsets,services
 
       echo "VulnBank deployment completed."
+
 # ============================================================
-# 11. DAST - OWASP ZAP Baseline
+# 10. MONITORING - DEPLOY PROMETHEUS ALERT RULES
+#
+# Prometheus, Grafana and Alertmanager are already
+# installed with Helm by the Kubernetes administrator.
+#
+# GitLab Runner only manages VulnBank alert rules.
+# ============================================================
+
+deploy-monitoring-alerts:
+  stage: monitoring
+  tags:
+    - devsecops
+
+  resource_group: minikube
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  script:
+    - |
+      set -e
+
+      echo "Deploying VulnBank monitoring alert rules..."
+
+      # Verify access to the monitoring namespace.
+      kubectl get namespace monitoring
+
+      # Verify the PrometheusRule CRD exists.
+      kubectl get crd prometheusrules.monitoring.coreos.com
+
+      # Validate the alert configuration.
+      kubectl apply \
+        --dry-run=server \
+        -f monitoring/alerts.yaml
+
+      # Create or update VulnBank alert rules.
+      kubectl apply -f monitoring/alerts.yaml
+
+      # Verify alert resource.
+      kubectl get prometheusrule \
+        vulnbank-availability-alerts \
+        -n monitoring
+
+      # Display monitoring Pods.
+      kubectl get pods -n monitoring
+
+      echo "VulnBank monitoring alerts deployed successfully."
+
+# ============================================================
+# 11. MONITORING - VERIFY MONITORING WORKLOADS
+#
+# This job checks Pod readiness and that the alert
+# resource exists. It does not simulate an incident.
+# ============================================================
+
+verify-monitoring:
+  stage: monitoring
+  tags:
+    - devsecops
+
+  resource_group: minikube
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+  needs:
+    - job: deploy-monitoring-alerts
+
+  script:
+    - |
+      set -e
+
+      echo "Verifying VulnBank monitoring..."
+
+      # Verify Grafana Deployment.
+      kubectl rollout status \
+        deployment/monitoring-grafana \
+        -n monitoring --timeout=180s
+
+      # Verify Prometheus Operator.
+      kubectl rollout status \
+        deployment/monitoring-kube-prometheus-operator \
+        -n monitoring --timeout=180s
+
+      # Verify kube-state-metrics.
+      kubectl rollout status \
+        deployment/monitoring-kube-state-metrics \
+        -n monitoring --timeout=180s
+
+      # Verify Prometheus.
+      kubectl rollout status \
+        statefulset/prometheus-monitoring-kube-prometheus-prometheus \
+        -n monitoring --timeout=180s
+
+      # Verify Alertmanager.
+      kubectl rollout status \
+        statefulset/alertmanager-monitoring-kube-prometheus-alertmanager \
+        -n monitoring --timeout=180s
+
+      # Verify custom alert rules exist.
+      kubectl get prometheusrule \
+        vulnbank-availability-alerts \
+        -n monitoring
+
+      echo "Monitoring verification completed."
+
+# ============================================================
+# 12. DAST - OWASP ZAP BASELINE
+# Blocking
 # ============================================================
 
 dast-baseline:
   stage: dast
-
   tags:
     - devsecops
 
@@ -315,10 +450,16 @@ dast-baseline:
       - security-reports/zap/ci/
     expire_in: 7 days
 
+# ============================================================
+# 13. DAST - OWASP ZAP ACTIVE SCAN
+# Manual, isolated environment
+# ============================================================
+
 dast-active:
   stage: dast
   tags:
     - devsecops
+
   resource_group: dast-active-isolated
 
   rules:

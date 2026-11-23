@@ -3,7 +3,7 @@
 # VulnBank DevSecOps - GitLab CI/CD Pipeline
 #
 # Security scanning
-# Docker image build and publishing
+# Docker build and image publishing
 # Kubernetes deployment
 # Monitoring alert deployment
 # OWASP ZAP DAST
@@ -56,7 +56,7 @@ semgrep-sast:
     expire_in: 3 months
 
 # ============================================================
-# 2. SECRETS DETECTION - GITLEAKS
+# 2. SECRET DETECTION - GITLEAKS
 # Report only
 # ============================================================
 
@@ -85,8 +85,12 @@ gitleaks-secrets:
     expire_in: 3 months
 
 # ============================================================
-# 3. FILESYSTEM SECURITY SCAN - TRIVY
+# 3. FILESYSTEM VULNERABILITY SCAN - TRIVY
 # Report only
+#
+# Persistent cache avoids unnecessary DB downloads.
+# Scanner execution errors fail the job.
+# Findings alone do not fail the job.
 # ============================================================
 
 trivy-filesystem:
@@ -94,19 +98,24 @@ trivy-filesystem:
   tags:
     - devsecops
 
+  resource_group: trivy-db-cache
+
   script:
     - mkdir -p "$REPORT_DIR"
     - |
-      docker run --rm \
+      timeout 10m docker run --rm \
         -v "$CI_PROJECT_DIR:/src" \
+        -v trivy-db-cache:/root/.cache/trivy \
         aquasec/trivy:latest \
         fs \
         --scanners vuln \
         --severity HIGH,CRITICAL \
-        --timeout 10m \
+        --timeout 9m \
+        --exit-code 0 \
+        --no-progress \
         --format json \
         --output "/src/$REPORT_DIR/trivy-fs.json" \
-        /src || true
+        /src
 
   artifacts:
     when: always
@@ -135,8 +144,12 @@ docker-build:
     expire_in: 3 months
 
 # ============================================================
-# 5. DOCKER IMAGE SECURITY SCAN - TRIVY
-# Report only
+# 5. DOCKER IMAGE VULNERABILITY SCAN - TRIVY
+#
+# Persistent Docker volume stores the vulnerability DB.
+# Uses Trivy's default registry configuration.
+# Stops stalled scans after 10 minutes.
+# Scanner errors are blocking; findings are report-only.
 # ============================================================
 
 trivy-image:
@@ -144,18 +157,25 @@ trivy-image:
   tags:
     - devsecops
 
+  resource_group: trivy-db-cache
+
   script:
     - mkdir -p "$REPORT_DIR"
     - |
-      docker run --rm \
+      timeout 10m docker run --rm \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$CI_PROJECT_DIR:/src" \
+        -v trivy-db-cache:/root/.cache/trivy \
         aquasec/trivy:latest \
         image \
+        --scanners vuln \
         --severity HIGH,CRITICAL \
+        --timeout 9m \
+        --exit-code 0 \
+        --no-progress \
         --format json \
         --output "/src/$REPORT_DIR/trivy-image.json" \
-        "$IMAGE_NAME" || true
+        "$IMAGE_NAME"
 
   artifacts:
     when: always
@@ -232,6 +252,7 @@ security-regression:
 
 # ============================================================
 # 8. PUBLISH IMAGE TO GITLAB CONTAINER REGISTRY
+# Main branch only
 # ============================================================
 
 publish-image:
@@ -259,7 +280,8 @@ publish-image:
       echo "VulnBank image published successfully."
 
 # ============================================================
-# 9. AUTOMATED KUBERNETES DEPLOYMENT
+# 9. AUTOMATED MINIKUBE DEPLOYMENT
+# Main branch only
 # ============================================================
 
 deploy-minikube:
@@ -283,7 +305,7 @@ deploy-minikube:
 
       DEPLOY_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
 
-      # Deploy PostgreSQL resources.
+      # Deploy PostgreSQL.
       kubectl -n vulnbank apply -f k8s/postgres.yaml
 
       kubectl -n vulnbank rollout status \
@@ -295,7 +317,7 @@ deploy-minikube:
         exit 1
       }
 
-      # Deploy Flask with commit-specific image.
+      # Deploy Flask with the commit-specific image.
       sed "s|image: vuln-bank:k8s|image: ${DEPLOY_IMAGE}|" \
         k8s/web.yaml | kubectl -n vulnbank apply -f -
 
@@ -307,11 +329,11 @@ deploy-minikube:
       kubectl apply -n vulnbank \
         -f k8s/network-policies/allow-rules.yaml
 
-      # Apply default-deny rules last.
+      # Apply default-deny rules.
       kubectl apply -n vulnbank \
         -f k8s/network-policies/default-deny.yaml
 
-      # Display application resources.
+      # Display deployed application resources.
       kubectl -n vulnbank get \
         pods,deployments,statefulsets,services
 
@@ -323,7 +345,8 @@ deploy-minikube:
 # Prometheus, Grafana and Alertmanager are already
 # installed with Helm by the Kubernetes administrator.
 #
-# GitLab Runner only manages VulnBank alert rules.
+# GitLab Runner deploys only VulnBank alert rules.
+# No cluster-admin permissions required.
 # ============================================================
 
 deploy-monitoring-alerts:
@@ -340,23 +363,17 @@ deploy-monitoring-alerts:
     - |
       set -e
 
-      echo "Deploying VulnBank monitoring alert rules..."
+      echo "Deploying VulnBank monitoring alerts..."
 
-      # Verify access to the monitoring namespace.
-      kubectl get namespace monitoring
-
-      # Verify the PrometheusRule CRD exists.
-      kubectl get crd prometheusrules.monitoring.coreos.com
-
-      # Validate the alert configuration.
+      # Validate alert configuration with Kubernetes.
       kubectl apply \
         --dry-run=server \
         -f monitoring/alerts.yaml
 
-      # Create or update VulnBank alert rules.
+      # Create or update PrometheusRule.
       kubectl apply -f monitoring/alerts.yaml
 
-      # Verify alert resource.
+      # Verify the rule exists.
       kubectl get prometheusrule \
         vulnbank-availability-alerts \
         -n monitoring
@@ -364,13 +381,13 @@ deploy-monitoring-alerts:
       # Display monitoring Pods.
       kubectl get pods -n monitoring
 
-      echo "VulnBank monitoring alerts deployed successfully."
+      echo "Monitoring alerts deployed successfully."
 
 # ============================================================
-# 11. MONITORING - VERIFY MONITORING WORKLOADS
+# 11. MONITORING - VERIFY PROMETHEUS STACK
 #
-# This job checks Pod readiness and that the alert
-# resource exists. It does not simulate an incident.
+# Verifies Kubernetes workload readiness and rule presence.
+# Does not perform an incident-response simulation.
 # ============================================================
 
 verify-monitoring:
@@ -392,32 +409,32 @@ verify-monitoring:
 
       echo "Verifying VulnBank monitoring..."
 
-      # Verify Grafana Deployment.
+      # Grafana.
       kubectl rollout status \
         deployment/monitoring-grafana \
         -n monitoring --timeout=180s
 
-      # Verify Prometheus Operator.
+      # Prometheus Operator.
       kubectl rollout status \
         deployment/monitoring-kube-prometheus-operator \
         -n monitoring --timeout=180s
 
-      # Verify kube-state-metrics.
+      # kube-state-metrics.
       kubectl rollout status \
         deployment/monitoring-kube-state-metrics \
         -n monitoring --timeout=180s
 
-      # Verify Prometheus.
+      # Prometheus.
       kubectl rollout status \
         statefulset/prometheus-monitoring-kube-prometheus-prometheus \
         -n monitoring --timeout=180s
 
-      # Verify Alertmanager.
+      # Alertmanager.
       kubectl rollout status \
         statefulset/alertmanager-monitoring-kube-prometheus-alertmanager \
         -n monitoring --timeout=180s
 
-      # Verify custom alert rules exist.
+      # Custom VulnBank alerts.
       kubectl get prometheusrule \
         vulnbank-availability-alerts \
         -n monitoring
@@ -425,8 +442,8 @@ verify-monitoring:
       echo "Monitoring verification completed."
 
 # ============================================================
-# 12. DAST - OWASP ZAP BASELINE
-# Blocking
+# 12. OWASP ZAP BASELINE DAST - BLOCKING
+# Main branch only
 # ============================================================
 
 dast-baseline:
@@ -451,8 +468,8 @@ dast-baseline:
     expire_in: 7 days
 
 # ============================================================
-# 13. DAST - OWASP ZAP ACTIVE SCAN
-# Manual, isolated environment
+# 13. OWASP ZAP ACTIVE DAST
+# Manual, isolated execution
 # ============================================================
 
 dast-active:
@@ -477,3 +494,4 @@ dast-active:
     expire_in: 7 days
 
   timeout: 40m
+
